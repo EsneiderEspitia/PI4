@@ -1,9 +1,15 @@
 # Byte-code and compiled classes
 *.class
 bin/
+APP/bin/
 build/
+APP/build/
+dist/
+APP/dist/
 dist_standalone/
+APP/dist_standalone/
 sfx_config.txt
+APP/sfx_config.txt
 
 # Temp & IDE files
 .idea/
@@ -12,6 +18,12 @@ sfx_config.txt
 .settings/
 .project
 .classpath
+*.code-workspace
+
+# Archivos temporales y backups de Draw.io
+*.bkp
+*.tmp
+~$*
 
 # OS files
 Thumbs.db

@@ -1,7 +1,6 @@
 package com.sigeiv.vista;
 
 import com.sigeiv.controlador.UsuarioController;
-import com.sigeiv.dao.UsuarioDAO;
 import com.sigeiv.modelo.Usuario;
 import com.sigeiv.util.HashUtil;
 
@@ -32,7 +31,6 @@ public class UsuarioPanel extends JPanel {
     };
 
     private final UsuarioController usuarioCtrl;
-    private final UsuarioDAO usuarioDAO = new UsuarioDAO();
 
     private JTable tablaUsuarios;
     private DefaultTableModel modeloTabla;
@@ -206,7 +204,7 @@ public class UsuarioPanel extends JPanel {
 
     private void cargarDatos() {
         modeloTabla.setRowCount(0);
-        List<Usuario> usuarios = usuarioDAO.listarTodos();
+        List<Usuario> usuarios = usuarioCtrl.listarTodos();
         for (Usuario u : usuarios) {
             modeloTabla.addRow(new Object[]{
                 u.getIdUsuario(),
@@ -223,9 +221,7 @@ public class UsuarioPanel extends JPanel {
     private void seleccionarUsuario() {
         int fila = tablaUsuarios.getSelectedRow();
         idSeleccionado = (int) modeloTabla.getValueAt(fila, 0);
-
-        Usuario u = usuarioDAO.listarTodos().stream()
-            .filter(x -> x.getIdUsuario() == idSeleccionado).findFirst().orElse(null);
+        Usuario u = usuarioCtrl.buscarPorId(idSeleccionado);
         if (u != null) {
             txtNombre.setText(u.getNombreUsuario());
             txtUsername.setText(u.getUsername());
@@ -256,34 +252,31 @@ public class UsuarioPanel extends JPanel {
                 JOptionPane.showMessageDialog(this, "Debe ingresar una contrasena para el nuevo usuario.", "Aviso", JOptionPane.WARNING_MESSAGE);
                 return;
             }
-            String hash = HashUtil.sha256(new String(txtPassword.getPassword()));
-            Usuario u = new Usuario(0, txtNombre.getText().trim(), txtUsername.getText().trim(),
-                                    hash, email, idRol, puedeAutorizar, activo);
-            if (usuarioDAO.insertar(u)) {
+            if (usuarioCtrl.registrar(txtNombre.getText().trim(), txtUsername.getText().trim(), new String(txtPassword.getPassword()), email, idRol, puedeAutorizar)) {
                 JOptionPane.showMessageDialog(this, "Usuario creado exitosamente.");
             } else {
                 JOptionPane.showMessageDialog(this, "Error al crear usuario (el username ya puede existir).", "Error", JOptionPane.ERROR_MESSAGE);
             }
         } else {
             // Editar usuario existente
-            Usuario u = usuarioDAO.listarTodos().stream()
-                .filter(x -> x.getIdUsuario() == idSeleccionado).findFirst().orElse(null);
-            if (u == null) return;
-            u.setNombreUsuario(txtNombre.getText().trim());
-            u.setUsername(txtUsername.getText().trim());
-            u.setEmail(email);
-            u.setIdRol(idRol);
-            u.setActivo(activo);
-            u.setPuedeAutorizar(puedeAutorizar);
+            Usuario u = usuarioCtrl.buscarPorId(idSeleccionado);
+            if (u != null) {
+                u.setNombreUsuario(txtNombre.getText().trim());
+                u.setUsername(txtUsername.getText().trim());
+                u.setEmail(email);
+                u.setIdRol(idRol);
+                u.setActivo(activo);
+                u.setPuedeAutorizar(puedeAutorizar);
 
-            if (txtPassword.getPassword().length > 0) {
-                u.setContrasena(HashUtil.sha256(new String(txtPassword.getPassword())));
-            }
+                if (txtPassword.getPassword().length > 0) {
+                    u.setContrasena(HashUtil.sha256(new String(txtPassword.getPassword())));
+                }
 
-            if (usuarioDAO.actualizar(u)) {
-                JOptionPane.showMessageDialog(this, "Usuario actualizado exitosamente.");
-            } else {
-                JOptionPane.showMessageDialog(this, "Error al actualizar usuario.", "Error", JOptionPane.ERROR_MESSAGE);
+                if (usuarioCtrl.actualizar(u)) {
+                    JOptionPane.showMessageDialog(this, "Usuario actualizado exitosamente.");
+                } else {
+                    JOptionPane.showMessageDialog(this, "Error al actualizar usuario.", "Error", JOptionPane.ERROR_MESSAGE);
+                }
             }
         }
 
@@ -307,7 +300,7 @@ public class UsuarioPanel extends JPanel {
             "Deseas continuar?",
             "Confirmar Desactivacion", JOptionPane.YES_NO_OPTION);
         if (opc == JOptionPane.YES_OPTION) {
-            if (usuarioDAO.eliminar(idSeleccionado)) {
+            if (usuarioCtrl.eliminar(idSeleccionado)) {
                 limpiarFormulario();
                 cargarDatos();
                 JOptionPane.showMessageDialog(this, "Usuario desactivado correctamente.");
