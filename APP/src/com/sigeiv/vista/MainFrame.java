@@ -161,6 +161,7 @@ public class MainFrame extends JFrame {
         panelContenido.add(new VentaPanel(usuarioCtrl), "ventas");
         panelContenido.add(new CompraPanel(usuarioCtrl), "compras");
         panelContenido.add(new InventarioPanel(usuarioCtrl), "inventario");
+        panelContenido.add(new MovimientoInventarioPanel(usuarioCtrl), "movimientos");
         panelContenido.add(new AutorizacionesPanel(usuarioCtrl), "autorizaciones");
         panelContenido.add(new ReportePanel(usuarioCtrl), "reportes");
 
@@ -173,6 +174,7 @@ public class MainFrame extends JFrame {
         JButton btnVentas = crearBotonSidebar("Ventas", "ventas");
         JButton btnCompras = crearBotonSidebar("Compras", "compras");
         JButton btnInventario = crearBotonSidebar("Inventario", "inventario");
+        JButton btnMovimientos = crearBotonSidebar("Movimientos", "movimientos");
         JButton btnAutorizaciones = crearBotonSidebar("Autorizaciones", "autorizaciones");
         JButton btnReportes = crearBotonSidebar("Reportes", "reportes");
 
@@ -209,6 +211,10 @@ public class MainFrame extends JFrame {
         // Inventario: Admin, Jefe Produccion, Almacen, Auditor (todos excepto Asesor Comercial)
         btnInventario.setVisible(!esAsesor);
 
+        // Movimientos / Radicacion de Documentos Soporte (Fase 4):
+        // Visible para Admin, Jefe Produccion, Almacen y Asesor Comercial (todos excepto Auditor que es solo lectura)
+        btnMovimientos.setVisible(!esAuditor);
+
         // Bandeja de Autorizaciones (Fase 3): acceso para todos los roles facultados
         // (Admin, Jefe Produccion, Asesor Comercial para autorizar; Almacen y Auditor para seguimiento y control)
         btnAutorizaciones.setVisible(true);
@@ -227,6 +233,7 @@ public class MainFrame extends JFrame {
         sidebar.add(btnVentas);
         sidebar.add(btnCompras);
         sidebar.add(btnInventario);
+        sidebar.add(btnMovimientos);
         sidebar.add(btnAutorizaciones);
         sidebar.add(btnReportes);
 

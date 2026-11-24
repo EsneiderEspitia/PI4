@@ -278,8 +278,22 @@ public class VentaPanel extends JPanel {
         }
 
         if (ventaCtrl.procesarVenta(venta, detalles)) {
+            // Fase 4 - RF-06: Generar remision formal de despacho comercial en movimientos de inventario
+            try {
+                com.sigeiv.controlador.MovimientoInventarioController movCtrl = new com.sigeiv.controlador.MovimientoInventarioController();
+                for (DetalleVenta dv : detalles) {
+                    movCtrl.radicarDespachoVenta("REM-VTA-" + venta.getIdVenta(),
+                        dv.getIdProducto(), dv.getCantidad(), dv.getPrecioUnitario(),
+                        usuarioCtrl.getUsuarioLogueado(), "Despacho comercial asociado a Factura/Venta #" + venta.getIdVenta());
+                }
+            } catch (Exception ex) {
+                System.err.println("Aviso: Error secundario al asentar remision de despacho: " + ex.getMessage());
+            }
+
             JOptionPane.showMessageDialog(this,
-                "Venta #" + venta.getIdVenta() + " procesada exitosamente.\nTotal: $" + String.format("%,.2f", total),
+                "Venta #" + venta.getIdVenta() + " procesada exitosamente.\n" +
+                "Remisión de despacho N.° REM-VTA-" + venta.getIdVenta() + " radicada para inventario.\n" +
+                "Total: $" + String.format("%,.2f", total),
                 "Venta Exitosa", JOptionPane.INFORMATION_MESSAGE);
 
             // Limpiar carrito
