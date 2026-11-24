@@ -3,6 +3,7 @@ package com.sigeiv.dao;
 import com.sigeiv.modelo.DetalleMovimiento;
 import com.sigeiv.modelo.Kardex;
 import com.sigeiv.modelo.MovimientoInventario;
+import com.sigeiv.modelo.TipoMovimiento;
 
 import java.sql.*;
 import java.util.ArrayList;
@@ -374,5 +375,207 @@ public class MovimientoInventarioDAO {
         } finally {
             conn.setAutoCommit(autoCommitOriginal);
         }
+    }
+
+    /**
+     * Radica formalmente un movimiento de inventario en estado PENDIENTE con transaccion ACID.
+     * Inserta la cabecera, sus renglones de detalle y sella el evento en auditoria.
+     * (Fase 4 - RF-05, RF-07, RF-08, RF-09).
+     */
+    public boolean radicarMovimiento(MovimientoInventario mov, List<DetalleMovimiento> detalles) throws Exception {
+        if (mov == null || detalles == null || detalles.isEmpty()) {
+            throw new Exception("El movimiento y sus renglones de detalle son obligatorios.");
+        }
+
+        Connection conn = conexionDB.getConexion();
+        boolean autoCommitOriginal = conn.getAutoCommit();
+
+        try {
+            conn.setAutoCommit(false);
+
+            // 1. Insertar cabecera de movimiento en estado PENDIENTE
+            String sqlMov = "INSERT INTO movimiento_inventario " +
+                            "(numero_documento_soporte, fecha_hora, id_tipo_movimiento, id_usuario_creador, estado_autorizacion, observaciones) " +
+                            "VALUES (?, CURRENT_TIMESTAMP, ?, ?, 'PENDIENTE', ?)";
+
+            int idMovimientoGenerado = -1;
+            try (PreparedStatement psMov = conn.prepareStatement(sqlMov, Statement.RETURN_GENERATED_KEYS)) {
+                psMov.setString(1, mov.getNumeroDocumentoSoporte());
+                psMov.setInt(2, mov.getIdTipoMovimiento());
+                psMov.setInt(3, mov.getIdUsuarioCreador());
+                psMov.setString(4, mov.getObservaciones());
+                psMov.executeUpdate();
+
+                try (ResultSet rsKeys = psMov.getGeneratedKeys()) {
+                    if (rsKeys.next()) {
+                        idMovimientoGenerado = rsKeys.getInt(1);
+                        mov.setIdMovimiento(idMovimientoGenerado);
+                    }
+                }
+            }
+
+            if (idMovimientoGenerado <= 0) {
+                throw new Exception("No fue posible generar el identificador de cabecera del movimiento.");
+            }
+
+            // 2. Insertar renglones de detalle
+            String sqlDet = "INSERT INTO detalle_movimiento (id_movimiento, id_producto, cantidad, costo_unitario, saldo_resultante) " +
+                            "VALUES (?, ?, ?, ?, 0)";
+
+            try (PreparedStatement psDet = conn.prepareStatement(sqlDet)) {
+                for (DetalleMovimiento det : detalles) {
+                    psDet.setInt(1, idMovimientoGenerado);
+                    psDet.setInt(2, det.getIdProducto());
+                    psDet.setInt(3, det.getCantidad());
+                    psDet.setDouble(4, det.getCostoUnitario());
+                    psDet.addBatch();
+                }
+                psDet.executeBatch();
+            }
+
+            // 3. Registrar en bitacora de auditoria
+            String sqlAud = "INSERT INTO auditoria (fecha_hora, id_usuario, accion, tabla_afectada, id_registro_afectado, detalle) " +
+                            "VALUES (CURRENT_TIMESTAMP, ?, 'RADICAR_DOCUMENTO', 'movimiento_inventario', ?, ?)";
+            try (PreparedStatement psAud = conn.prepareStatement(sqlAud)) {
+                psAud.setInt(1, mov.getIdUsuarioCreador());
+                psAud.setInt(2, idMovimientoGenerado);
+                psAud.setString(3, "Radicacion formal de documento soporte " + mov.getNumeroDocumentoSoporte() + " en estado PENDIENTE.");
+                psAud.executeUpdate();
+            }
+
+            conn.commit();
+            return true;
+
+        } catch (Exception e) {
+            conn.rollback();
+            throw e;
+        } finally {
+            conn.setAutoCommit(autoCommitOriginal);
+        }
+    }
+
+    /**
+     * Genera el siguiente numero consecutivo oficial de documento soporte.
+     * Ejemplos: OP-2026-003, DEV-2026-002, AJU-2026-002, BAJ-2026-002, REM-2026-001.
+     */
+    public String generarSiguienteNumeroSoporte(String codigoTipo) {
+        String prefijo;
+        if ("ENT_PROD".equalsIgnoreCase(codigoTipo) || codigoTipo.toUpperCase().startsWith("OP")) prefijo = "OP-2026-";
+        else if ("DEV_CLIE".equalsIgnoreCase(codigoTipo) || codigoTipo.toUpperCase().startsWith("DEV")) prefijo = "DEV-2026-";
+        else if ("AJU_FISI".equalsIgnoreCase(codigoTipo) || codigoTipo.toUpperCase().startsWith("AJU")) prefijo = "AJU-2026-";
+        else if ("BAJ_MERM".equalsIgnoreCase(codigoTipo) || codigoTipo.toUpperCase().startsWith("BAJ")) prefijo = "BAJ-2026-";
+        else if ("SAL_VENT".equalsIgnoreCase(codigoTipo) || codigoTipo.toUpperCase().startsWith("REM")) prefijo = "REM-2026-";
+        else prefijo = "DOC-2026-";
+
+        String sql = "SELECT COUNT(*) FROM movimiento_inventario m " +
+                     "JOIN tipo_movimiento t ON m.id_tipo_movimiento = t.id_tipo_movimiento " +
+                     "WHERE t.codigo_movimiento = ?";
+        try (Connection conn = conexionDB.getConexion();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, codigoTipo);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    int count = rs.getInt(1) + 1;
+                    return String.format("%s%03d", prefijo, count);
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("Error al generar consecutivo: " + e.getMessage());
+        }
+        return prefijo + (System.currentTimeMillis() % 1000);
+    }
+
+    /**
+     * Lista todos los tipos de movimiento parametrizados en el sistema.
+     */
+    public List<TipoMovimiento> listarTiposMovimiento() {
+        List<TipoMovimiento> tipos = new ArrayList<>();
+        String sql = "SELECT id_tipo_movimiento, codigo_movimiento, descripcion, naturaleza_afectacion, rol_autorizador_requerido " +
+                     "FROM tipo_movimiento ORDER BY id_tipo_movimiento ASC";
+        try (Connection conn = conexionDB.getConexion();
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
+            while (rs.next()) {
+                tipos.add(new TipoMovimiento(
+                    rs.getInt("id_tipo_movimiento"),
+                    rs.getString("codigo_movimiento"),
+                    rs.getString("descripcion"),
+                    rs.getString("naturaleza_afectacion"),
+                    rs.getString("rol_autorizador_requerido")
+                ));
+            }
+        } catch (SQLException e) {
+            System.err.println("Error al listar tipos de movimiento: " + e.getMessage());
+        }
+        return tipos;
+    }
+
+    /**
+     * Busca un tipo de movimiento por su codigo nemotecnico (ENT_PROD, DEV_CLIE, etc.).
+     */
+    public TipoMovimiento buscarTipoPorCodigo(String codigo) {
+        String sql = "SELECT id_tipo_movimiento, codigo_movimiento, descripcion, naturaleza_afectacion, rol_autorizador_requerido " +
+                     "FROM tipo_movimiento WHERE codigo_movimiento = ?";
+        try (Connection conn = conexionDB.getConexion();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, codigo);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return new TipoMovimiento(
+                        rs.getInt("id_tipo_movimiento"),
+                        rs.getString("codigo_movimiento"),
+                        rs.getString("descripcion"),
+                        rs.getString("naturaleza_afectacion"),
+                        rs.getString("rol_autorizador_requerido")
+                    );
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("Error al buscar tipo de movimiento: " + e.getMessage());
+        }
+        return null;
+    }
+
+    /**
+     * Obtiene el listado historico de todos los movimientos de inventario registrados.
+     */
+    public List<MovimientoInventario> listarTodosMovimientos() {
+        List<MovimientoInventario> lista = new ArrayList<>();
+        String sql = "SELECT m.id_movimiento, m.numero_documento_soporte, m.fecha_hora, m.id_tipo_movimiento, " +
+                     "       t.codigo_movimiento, t.descripcion AS desc_tipo, t.naturaleza_afectacion, t.rol_autorizador_requerido, " +
+                     "       m.id_usuario_creador, u1.nombre_usuario AS creador_nombre, " +
+                     "       m.id_usuario_autorizador, u2.nombre_usuario AS autorizador_nombre, " +
+                     "       m.estado_autorizacion, m.fecha_autorizacion, m.observaciones " +
+                     "FROM movimiento_inventario m " +
+                     "JOIN tipo_movimiento t ON m.id_tipo_movimiento = t.id_tipo_movimiento " +
+                     "JOIN usuario u1 ON m.id_usuario_creador = u1.id_usuario " +
+                     "LEFT JOIN usuario u2 ON m.id_usuario_autorizador = u2.id_usuario " +
+                     "ORDER BY m.id_movimiento DESC";
+        try (Connection conn = conexionDB.getConexion();
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
+            while (rs.next()) {
+                MovimientoInventario mov = new MovimientoInventario();
+                mov.setIdMovimiento(rs.getInt("id_movimiento"));
+                mov.setNumeroDocumentoSoporte(rs.getString("numero_documento_soporte"));
+                mov.setFechaHora(rs.getString("fecha_hora"));
+                mov.setIdTipoMovimiento(rs.getInt("id_tipo_movimiento"));
+                mov.setCodigoTipoMovimiento(rs.getString("codigo_movimiento"));
+                mov.setNombreTipoMovimiento(rs.getString("desc_tipo"));
+                mov.setNaturalezaAfectacion(rs.getString("naturaleza_afectacion"));
+                mov.setRolAutorizadorRequerido(rs.getString("rol_autorizador_requerido"));
+                mov.setIdUsuarioCreador(rs.getInt("id_usuario_creador"));
+                mov.setNombreUsuarioCreador(rs.getString("creador_nombre"));
+                mov.setIdUsuarioAutorizador((Integer) rs.getObject("id_usuario_autorizador"));
+                mov.setNombreUsuarioAutorizador(rs.getString("autorizador_nombre"));
+                mov.setEstadoAutorizacion(rs.getString("estado_autorizacion"));
+                mov.setFechaAutorizacion(rs.getString("fecha_autorizacion"));
+                mov.setObservaciones(rs.getString("observaciones"));
+                lista.add(mov);
+            }
+        } catch (SQLException e) {
+            System.err.println("Error al listar historial de movimientos: " + e.getMessage());
+        }
+        return lista;
     }
 }
